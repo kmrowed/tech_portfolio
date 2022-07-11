@@ -1,4 +1,6 @@
-Howdy! 
+## NYT API Project Overview
+
+Hey there!
 
 You are viewing my New York Times API tutorial project. 
 I accessed data from The New York Times' movie review API with a specific focus on Tarantino films.
