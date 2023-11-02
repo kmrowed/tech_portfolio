@@ -2,6 +2,6 @@
 
 Hi there,
 
-You are viewing a project I helped develop and orchestrate for my DS 2003 - Data Visualization class. Two fellow classmates and I used kaggle dataset of IMDB's top 1000 movies to explore. We cleaned the data in R, graphed some interesting variables, added loess lines and neat analytical features, and then added a UI interface overtop of our visualizations. Lastly, we presented our project to the internet using a Shiny App.
+You are viewing a data visualization project I helped develop and orchestrate for my DS 2003 - Data Visualization class. Two fellow classmates and I used kaggle dataset of IMDB's top 1000 movies to explore data science questions related to genre, rating, and earnings. We cleaned the data in R, made graphs based on our questions, and added neat analytical features like loess lines. To access the visualizations, we added a Shiny App UI interface overtop of our visualizations that can be seen HERE: https://cartershields.shinyapps.io/DS1234/.
 
 Hope you find this project engaging!
