@@ -1,0 +1,384 @@
+---
+title: "The Perfect Playlist: Radio Hits"
+author: "Miles Lane and Adina Kugler"
+date: "5/5/2022"
+output:
+  html_document:
+    toc: TRUE
+    theme: cerulean
+    toc_float: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, include=FALSE}
+library(rio)
+library(plyr)
+library(tidyverse)
+library(rpart)
+library(psych)
+library(pROC)
+library(rpart.plot)
+library(rattle)
+library(caret)
+library(C50) #Need this to pass into caret 
+library(mlbench)
+library(mice)
+library(corrplot)
+library(ggplot2)
+```
+
+## Question and Background
+**How well can we build a model that accurately predicts popular songs for 2020 based on data since 2015?**
+
+Radio hosts are always looking to optimize their playlists. It is essential for their job to continue engaging listeners and highlighting the next best song. Our question centers around the idea of predicting popularity as a measure of success. We want to use data science as a decision-making tool for hot new songs. Radio songs are often based on who pays the most and has the best promoter to get played. The goal is to evaluate other methods so that both the hosts and artists will have an idea if their songs will be popular enough to be added to radio stations. It will contribute to more viewership for the radio station and more exposure for a song deemed hot. The goal is to aid radio hosts in determining which songs to add to their playlists. 
+
+The data used for this project is a dataset extracted from a csv file on Kaggle that was taken from the Spotify API. There are almost 170,000 unique songs in this data set from 1921 to 2020. 
+
+
+## Data Dictionary{.tabset}
+
+### acousticness
+A measure from 0.0 to 1.0 of whether the track is acoustic.
+
+### danceability
+How suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable.
+
+### duration_ms
+Duration of track in milliseconds. This value is normalized between 0 and 1 in data cleaning.
+
+### energy
+A measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy.
+
+### explicit
+Whether a song is considered explicit (1) or not (2).
+
+### instrumentalness
+Predicts whether a track contains no vocals. The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content.
+
+### liveness
+Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live.
+
+### loudness
+Overall loudness of a track in decibels (dB). Loudness values are averaged across the entire track. Values typical range between -60 and 0 db. 
+This value is normalized between 0 and 1 in data cleaning.
+
+### mode
+Indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0.
+
+### popularity
+A 0 to 100 score that ranks how popular an artist is relative to other artists on Spotify. 
+This value was converted to a factor variable where low probability is less than 70 and high probability is more than 70.
+
+### speechiness 
+Detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book, poetry), the closer to 1.0 the attribute value.
+
+### tempo
+The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration. 
+This value is normalized between 0 and 1 in data cleaning.
+
+### valence
+A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).
+
+### year
+release year of a song
+
+### name
+song title 
+
+## EDA{.tabset}
+
+```{r, include=FALSE}
+# read in dataset
+data <- read_csv("/Users/charleslane/Desktop/data.csv")
+str(data)
+
+# filter data to year 2000 or more
+data1 <- data %>% filter(year > 1999)
+
+# looking through each year
+sum<-data1 %>%
+  group_by(year) %>%
+  summarise_at(vars(popularity), list(name = mean))
+
+
+cor(data1$year, data1$popularity)
+
+summary(data1$popularity)
+# 70 as benchmark
+
+summary(data1) # no nas in dataset
+
+# factoring explicit, key, and mode 
+data1[,c(6,9,12)] <- lapply(data1[,c(6,9,12)], as.factor)
+
+#drop columns
+data1 <- data1[-c(7,15)]
+
+# normalize loudness as it is not between 0 and 1
+normalize <- function(x){
+ (x - min(x)) / (max(x) - min(x))
+}
+
+data1[c("loudness", "duration_ms", "tempo")] <- lapply(data1[c("loudness", "duration_ms", "tempo")], normalize)
+
+nums <- unlist(lapply(data1, is.numeric))  
+corr_data <- data1[,nums]
+M<-cor(corr_data)
+```
+
+### Graph 1
+```{r, echo=FALSE}
+# histogram of popularity
+ggplot(data1, aes(x=popularity)) + geom_histogram(binwidth=3, color="black", fill="light blue") + geom_vline(aes(xintercept=mean(popularity)),
+            color="red", linetype="dashed", size=1) + labs(title = "Distribution of Popularity", x = "Popularity")
+```
+
+The popularity variable follows a normal distribution with a slight left skew. The mean is graphed in red to indicate the mean popularity of a song to determine later a cut-off point for the binary variable that popularity will become.
+
+### Graph 2
+```{r, echo=FALSE}
+# boxplot of popularity
+ggplot(data1, aes(x=popularity)) + 
+  geom_boxplot(color="black", fill="light blue") + labs(title = "Overall Distribution of Popularity", x = "Popularity")
+```
+
+This is a boxplot of the overall distribution of popularity since 2000. The 3rd quartile for popularity is 62. Since a more popular song is desired, the threshold for high popularity as a binary variable will be changed to 70.
+
+
+### Graph 3
+```{r, echo=FALSE}
+# boxplots of popularity since 2000
+ggplot(data1, aes(group=year,y=year, x=popularity)) + 
+  geom_boxplot(color="black", fill="light blue") + labs(title = "Distribution of Popularity Since 2000", x = "Popularity", y="Year")
+```
+
+The change in popularity needed to be examined, so popularity was grouped by year to determine how the summary statistics varied over time. Since there appears to be great variation and a slight positive correlation, It was determined that the training dataset should only focus on 2015 and onward.
+
+### Graph 4
+```{r, echo=FALSE}
+# correlation plot
+corrplot(M, method="circle")
+```
+
+A correlation plot to determine how numeric variables relate with each other and with popularity as the target variable. The larger and darker the circles, the more correlated the two variables are to each other.
+
+
+```{r, include=FALSE}
+# splitting data based on cutoff point to 0 and 1 for popularity
+data1$popularity <- cut(data1$popularity,c(-1 ,70,100),labels = c('low','high'))
+10285/(10285+31371)
+
+
+# collapse key
+table(data1$key)
+data1$key <- fct_collapse(data1$key,
+                               low_0to1 = c("0","1"),
+                               lmed_2to5 = c("2","3","4","5"),
+                               hmed_6to8 = c("6","7","8"),
+                               high_9to11 = c("9","10","11"))
+
+
+table(data1$key)
+```
+
+### Graph 5
+```{r, echo=FALSE}
+# bar graph of explicit and popularity
+ggplot(data1) +
+  aes(x = popularity, fill = factor(explicit)) +
+  geom_bar(position = "fill") + labs(title = "Popularity for Explicit vs Non-Explicit", x = "Popularity", y = "Proportion",fill="Explicit")
+```
+
+70 was used as the cutoff point for determining highly popular songs as a binary variable. This was measured against explicit to determine if an explicit song could be a good predictor of popularity. It does appear to be the case and could be useful in the final model.
+
+
+### Graph 6
+```{r, echo=FALSE}
+# bar graph of key and popularity
+ggplot(data1) +
+  aes(x = popularity, fill = factor(key)) +
+  geom_bar(position = "fill") + labs(title = "Popularity for Key Groups", x = "Popularity", y = "Proportion",fill="Key")
+```
+
+There appears to be a fairly even makeup for different key levels and likely will not play a significant role in the final model.
+
+```{r, include=FALSE}
+str(data1)
+
+# splitting data so 2020 is test, before 2000 deletes, remove year and name 
+test<- data1 %>% 
+  filter(year == 2020) %>% select(-year)
+train_tune <- data1 %>% 
+  filter(year >= 2015) %>% select(-c(year,name))
+
+set.seed(2222)
+
+table(test$popularity)
+623/(1133+623)
+
+table(train_tune$popularity)
+2614/(9042+2614)
+
+# creating training set
+part_index_1 <- caret::createDataPartition(train_tune$popularity,
+                                           times=1,
+                                           p = 0.90,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- train_tune[part_index_1, ]
+tune <- train_tune[-part_index_1, ]
+
+### dropping variables that did not have importance
+train <- train[,-c(2,6,11,15)]
+str(tune)
+tune <- tune[,-c(2,6,11,15)]
+str(test)
+test <- test[,-c(6,11,16)]
+
+features <- train[,-9]
+target <- train$popularity
+
+table(target)
+
+sum(is.na(target))
+
+str(features)
+```
+
+```{r, include=FALSE}
+## Running Models
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 4,
+                          classProbs = TRUE,
+                          summaryFunction = twoClassSummary) 
+
+
+
+set.seed(1984)
+mdl1 <- train(x=features,
+                y=target,
+                method="rpart",
+                trControl=fitControl,
+                metric="spec")
+
+
+mdl1
+```
+
+
+```{r, include=FALSE}
+## Predicting on the tune set, confusion matrix
+str(tune)
+
+mdl1_predict_probs <- predict(mdl1, newdata = tune, type= "prob")
+
+mdl1_predict_values = predict(mdl1, newdata = tune, type= "raw")
+
+mdl1_fitted_values <- as.data.frame(mdl1_predict_values)
+
+confusionMatrix(mdl1_fitted_values$mdl1_predict_values, 
+                tune$popularity, 
+                positive = "high", 
+                dnn=c("Prediction", "Actual"), 
+                mode = "sens_spec")
+
+```
+
+```{r, include=FALSE}
+# Adjusting the threshold
+
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=tune_outcome
+  thres <- as.factor(ifelse(x > y, "high","low"))
+  confusionMatrix(thres, z, positive = "high", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+
+
+adjust_thres(mdl1_predict_probs$high,y=.3,tune$popularity)
+
+adjust_thres(mdl1_predict_probs$high,y=.88,tune$popularity)
+
+adjust_thres(mdl1_predict_probs$high,y=.5,tune$popularity)
+
+# choosing a threshold of .5
+adjust_thres(mdl1_predict_probs$high,y=.4,tune$popularity)
+```
+
+```{r, include=FALSE}
+## Testing data set evaluation
+final_fitted_model_prob <- predict(mdl1, newdata = test, type= "prob")
+
+final_fitted_model_values <- predict(mdl1, newdata = test, type= "raw")
+
+final_fitted_model_prob <- as.data.frame(final_fitted_model_prob)
+
+final_fitted_model_values <-
+  as.data.frame(final_fitted_model_values)
+
+adjust_thres(final_fitted_model_prob$high,y=.5,test$popularity)
+```
+
+## Methods{.tabset}
+
+### Data Cleaning
+The target variable of popularity needed to be converted to a binary factor variable because it does not matter how popular a song is predicted to be. Rather it matters if a song should be played or not. Therefore, a cutoff threshold for popularity was determined to be 70. Over 70 in popularity is considered high, and under is low popularity. The variable key was converted to a factor variable with four levels as it was discrete between 1 and 10. Next, the years between 2015 and 2019 were determined based on EDA to be the best for the train and tune datasets. The goal is to predict 2020 songs that will be the best to be played on a radio station. All of the numeric variables were normalized between 0 and 1 for interpreting the data. The data was cleaned to minimize unneeded variables that would not add to the model. The year was taken out of the datasets once the model was split into test, train, and tune datasets, as the year would not help determine the test as it is from a single year. The train set had 90% of the 2015-2019 data, and the tune set had 10%. It was essential to maintain the prevalence of the target variable among the split datasets. The prevalence for 2020 of high popularity was about 10% higher for the test set compared to the rest of the data. This could pose some issues in the final testing of the model. The train and tune data was split to maintain an equal prevalence of popularity using data partition. This is imperative for testing the model without chance playing a significant role with skewed results in the tune of the model. 
+
+### Model Building
+The model chosen was a **decision tree for classification** with the binary variable for popularity. This method was used because it has a high level of visualization and the ability to use all numeric and factor variables without distance measures. Decision trees allow for simple interpretations and have predictive power that can be easily identified with built-in predictive measurements. There are also options for adjusting thresholds and hyperparameters to best tune the model to be the best predictor. Having a visual model was important to the understanding of prediction. This type of model is supervised machine learning, which helps give the user control of the model depth and offers options for adjusting the model as needed. Decision trees can predict a specific target variable using piecewise functions and non-parametric statistics. It is a simple model to understand with a high complexity of information to be gathered. The method for the was **rpart**, which evaluates cp and ROC to determine the best model. 
+
+### Model Results
+The initial model showed significant discrepancies in specificity and sensitivity. There was an attempt to adjust the grid as hyperparameters, but this would not allow the model to converge. Next, it was determined to adjust the threshold for the model to make changes to how it determines which category to classify each data point. This was evaluated using the tune set. The optimal threshold was determined to be .5. Three variables (**mode, valence, and explicit**) did not serve any importance to the model and were therefore removed. Feature engineering, including changing the key to include different groupings, was attempted, but the key ended up working better. Other feature engineering did not work, and variables were dropped. Therefore, all of these variables were removed, which aided in lessening the complexity of the model. 
+
+## Result Output{.tabset}
+
+### Decision Tree
+```{r, echo=FALSE}
+# Viewing the decision tree
+rpart.plot(mdl1$finalModel, type=4,extra=101)
+```
+
+### Variable Importance
+```{r, echo=FALSE}
+# Viewing the variable importance
+varImp(mdl1)
+```
+
+### Song Recommendations
+```{r, echo=FALSE}
+# Viewing the variable importance
+test_data<- test%>%select(name, popularity)
+final<-cbind(test_data,final_fitted_model_values)
+song_list <- final%>%filter(final_fitted_model_values=="high" & popularity=="high")%>%select(name)
+DT::datatable(song_list)
+```
+
+### Confusion Matrix
+```{r, echo=FALSE, warning=FALSE}
+# final confusion matrix
+adjust_thres(final_fitted_model_prob$high,y=.5,test$popularity)
+```
+
+## Evaluation of Model
+On our test set, the model performed quite well. The positive predictive value was 1. This means that of the songs predicted to be positive, the model predicted 100% of them right. The sensitivity rate was still relatively low at around 0.016, meaning that a large number of false negatives were present in the final results. This means that a DJ using our model would overlook about 90% of popular songs. Nonetheless, according to our popularity rating, 100% of the songs they would use would be popular among their crowd. The specificity was also 100%, meaning all songs with low popularity would not be recommended to the radio station. The F1 score is .032, which is extremely low, and most recommendations would determine that this is not a "good" model. 
+
+## Fairness Assessment
+This analysis does not include data for any protected classes. The risk for using the data is minimal in terms of human confidentiality damage; however, there is potential for some financial damage. Artists and publishing groups could potentially lose money if radio stations were to use this model to determine which songs to play and thereby reduce the economic potential for a song that the model deemed unpopular but really should have been popular. In addition, radio stations could lose viewership and money by using this model to predict which songs would be popular and playing songs that are ultimately not popular.
+
+## Conclusions
+Overall, the final model was able to recommend popular songs to radio hosts 100% of the time for 2020 without adding in any low popularity songs. Since our aim is for a radio host and not artists, this model would be helpful in determining a few songs to add to a playlist. It will not be a comprehensive list of all songs but will be recommendations for adding songs that will definitely be a hit. The radio stations could benefit greatly from these recommendations. Although this model may not be comprehensive in weeding out false negatives, it is practically perfect for determining true positives. The final model identified many songs that are considered Latin pop. This indicates a widespread rise in this genre of music. This could suggest that radio stations should play this genre more, and our model could be helpful in predicting new songs in a genre not commonly played on US radio stations.
+
+## Future Work{.tabset}
+
+### Limitations 
+A significant limitation of our model was the discrepancy between popularity prevalence rates in different years. This limited our model because many of the songs that our model predicted as popular were kept within our test data set. It was necessary to keep them within the test data set because our data sets were divided by year; thus, no point could be exchanged between data sets. In the future, we would ideally find a better mechanism for distributing songs across train, tune, and test data sets to contain a similar prevalence rate. Due to the significant increase in performance on the test set, which had a prevalence rate almost double that of the tune data set, it is possible that in the future, we will train our model on a data set with a higher prevalence rate.
+
+### Further Analysis
+Further analysis could be done using a regression-based decision tree model. This is because our cutoff of what was deemed popular and unpopular was somewhat arbitrary. More likely, it is the case that some are very highly popular, some highly popular, some moderately popular, and so on. A regression-based model would allow us to present songs in order of popularity, allowing DJs using our model to select more moderate to highly popular songs that may have barely missed the cutoff on our classification model. Another way in which we could increase the analytical power of our model would be to factor in popularity by genre. This would benefit DJs greatly, enabling them to find songs that fit the theme of their radio show or event. 
